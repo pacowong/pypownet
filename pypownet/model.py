@@ -1,6 +1,5 @@
 # coding: utf-8
 from __future__ import division # convert int or long division arguments to floating point values before division
-from functools import partial
 import functools
 from pyomo.environ import *
 from pyomo.core import Var
@@ -44,20 +43,19 @@ class _PowerNetPyomoModel():
             else:
                 opt_varname = f_type.capitalize()
             setattr(model, opt_varname, Set())
-            all_ResGenerators.append(getattr(model, opt_varname))
-
+            if f_type in self.net_data.get_generators_with_min_reserves(): #not renamed
+                all_ResGenerators.append(getattr(model, opt_varname))
+        
         model.ResGenerators = functools.reduce(lambda x, y: x | y, all_ResGenerators)   
-        # if f_i == 0:
-        #     model.ResGenerators = getattr(model, opt_varname) #TODO: start from Set()?
-        # else:
-        #     model.ResGenerators = model.Generators | getattr(model, opt_varname)
+        #model.ResGenerators = model.Coal_st | model.Oil_ic | model.Oil_st
 
         ### Domain node set
         model.nodes = Set()
         model.sources = Set(within=model.nodes)
         model.sinks = Set(within=model.nodes)
         for node_type in self.net_data.node_lists:
-             setattr(model, node_type, Set())
+            if len(self.net_data.node_lists[node_type]) > 0:
+                setattr(model, node_type, Set())
         model.d_nodes = Set()
 
         #####==== Parameters for dispatchable resources ===####
@@ -222,30 +220,68 @@ class _PowerNetPyomoModel():
     def attach_model_objective_function(self, model):
         ######================Objective function=============########
         def SysCost(model):
+            total = 0
+
             fixed = sum(model.maxcap[j]*model.fix_om[j]*model.on[j,i] for i in model.hh_periods for j in model.Generators)
+            total += fixed
+
             starts = sum(model.maxcap[j]*model.st_cost[j]*model.switch[j,i] for i in model.hh_periods for j in model.Generators)
+            total += starts
 
             coal_st = sum(model.mwh[j,i]*(model.heat_rate[j]*model.gen_cost[j] + model.var_om[j]) for i in model.hh_periods for j in model.Coal_st)  
+            total += coal_st
+
             oil_ic = sum(model.mwh[j,i]*(model.heat_rate[j]*model.gen_cost[j] + model.var_om[j]) for i in model.hh_periods for j in model.Oil_ic)
+            total += oil_ic
+
             oil_st = sum(model.mwh[j,i]*(model.heat_rate[j]*model.gen_cost[j] + model.var_om[j]) for i in model.hh_periods for j in model.Oil_st)
+            total += oil_st
 
-            imprt_v = sum(model.mwh[j,i]*model.gen_cost[j] for i in model.hh_periods for j in model.Imp_Viet)
-            imprt_t = sum(model.mwh[j,i]*model.gen_cost[j] for i in model.hh_periods for j in model.Imp_Thai)
-            import_hydro = sum(model.hydro_import[j,i]*model.h_import_cost for i in model.hh_periods for j in model.h_imports) 
+            if hasattr(model, 'Imp_Viet'):
+                imprt_v = sum(model.mwh[j,i]*model.gen_cost[j] for i in model.hh_periods for j in model.Imp_Viet)
+                total += imprt_v
 
-            # biomass_st = sum(model.mwh[j,i]*(model.heat_rate[j]*model.gen_cost[j] + model.var_om[j]) for i in model.hh_periods for j in model.Biomass_st)
-            # gas_cc = sum(model.mwh[j,i]*(model.heat_rate[j]*model.gen_cost[j] + model.var_om[j]) for i in model.hh_periods for j in model.Gas_cc)
-            # gas_st = sum(model.mwh[j,i]*(model.heat_rate[j]*model.gen_cost[j] + model.var_om[j]) for i in model.hh_periods for j in model.Gas_st)
-            
+            if hasattr(model, 'Imp_Thai'):
+                imprt_t = sum(model.mwh[j,i]*model.gen_cost[j] for i in model.hh_periods for j in model.Imp_Thai)
+                total += imprt_t
+
+            if hasattr(model, 'h_imports'):
+                import_hydro = sum(model.hydro_import[j,i]*model.h_import_cost for i in model.hh_periods for j in model.h_imports) 
+                total += import_hydro
+
+            if hasattr(model, 'Biomass_st'):
+                biomass_st = sum(model.mwh[j,i]*(model.heat_rate[j]*model.gen_cost[j] + model.var_om[j]) for i in model.hh_periods for j in model.Biomass_st)
+                total += biomass_st
+                
+            if hasattr(model, 'Gas_cc'):
+                gas_cc = sum(model.mwh[j,i]*(model.heat_rate[j]*model.gen_cost[j] + model.var_om[j]) for i in model.hh_periods for j in model.Gas_cc)
+                total += gas_cc
+
+            if hasattr(model, 'Gas_st'):
+                gas_st = sum(model.mwh[j,i]*(model.heat_rate[j]*model.gen_cost[j] + model.var_om[j]) for i in model.hh_periods for j in model.Gas_st)  
+                total += gas_st
+                
             slack = sum(model.mwh[j,i]*model.heat_rate[j]*model.gen_cost[j] for i in model.hh_periods for j in model.Slack)
-            
-            return fixed +starts +coal_st +oil_ic +oil_st +imprt_v +imprt_t +import_hydro +slack  ## +biomass_st +gas_cc +gas_st
+            total += slack
+
+            return total #fixed +starts +coal_st +oil_ic +oil_st +imprt_v +imprt_t +import_hydro +slack  ## +biomass_st +gas_cc +gas_st
 
         model.SystemCost = Objective(rule=SysCost, sense=minimize)
         return model
 
 
     def attach_model_constraints(self, model):
+        model = self.attach_model_constraints_logical(model)
+        model = self.attach_model_constraints_up_down_time(model)
+        model = self.attach_model_constraints_ramp_rate(model)
+        model = self.attach_model_constraints_capacity(model)
+        model = self.attach_model_constraints_power_balance(model)
+        model = self.attach_model_constraints_transmission(model)
+        model = self.attach_model_constraints_reserve_and_zero_sum(model)
+        return model
+
+
+    def attach_model_constraints_logical(self, model):
         ######========== Logical Constraint =========#############
         def OnCon(model,j,i):
             return model.mwh[j,i] <= model.on[j,i] * model.m
@@ -268,8 +304,10 @@ class _PowerNetPyomoModel():
         def SwitchCon4(model,j,i):
             return  model.on[j,i] - model.on[j,i-1] <= model.switch[j,i]
         model.Switch4Constraint = Constraint(model.Generators, model.hh_periods,rule = SwitchCon4)
+        return model
 
 
+    def attach_model_constraints_up_down_time(self, model):
         ######========== Up/Down Time Constraint =========#############
         ##Min Up time
         def MinUp(model,j,i,k):
@@ -286,8 +324,10 @@ class _PowerNetPyomoModel():
             else:
                 return Constraint.Skip
         model.MinimumDown = Constraint(model.Generators, model.HH_periods, model.HH_periods,rule=MinDown)
+        return model
 
 
+    def attach_model_constraints_ramp_rate(self, model):
         ######==========Ramp Rate Constraints =========#############
         def Ramp1(model,j,i):
             a = model.mwh[j,i]
@@ -300,7 +340,10 @@ class _PowerNetPyomoModel():
             b = model.mwh[j,i-1]
             return b - a <= model.ramp[j] 
         model.RampCon2 = Constraint(model.Generators, model.ramp_periods,rule=Ramp2)
+        return model
 
+
+    def attach_model_constraints_capacity(self, model):
         ######=================================================########
         ######               Segment B.10                      ########
         ######=================================================########
@@ -340,13 +383,99 @@ class _PowerNetPyomoModel():
                 return model.wind[z,i] <= model.HorizonWind[z,i]  
             model.WindConstraint= Constraint(model.w_nodes, model.hh_periods,rule=WindC)
 
-        model = self.attach_model_constraints_power_balance(model)
-        model = self.attach_model_constraints_transmission(model)
-        model = self.attach_model_constraints_reserve_and_zero_sum(model)
+        return model
+
+    def attach_model_constraints_power_balance(self, model):
+        ######=================================================########
+        ######               Segment B.11.1                    ########
+        ######=================================================########
+
+        #########======================== Power balance in sub-station nodes (with/without demand) ====================#######
+        ###With demand
+        def TDnodes_Balance(model,z,i):
+            demand = model.HorizonDemand[z,i]
+            impedance = sum(model.linesus[z,k] * (model.vlt_angle[z,i] - model.vlt_angle[k,i]) for k in model.sinks)   
+            return - demand == impedance
+        model.TDnodes_BalConstraint= Constraint(model.td_nodes,model.hh_periods,rule= TDnodes_Balance)
+
+        ###Without demand
+        def TNnodes_Balance(model,z,i):
+            #demand = model.HorizonDemand[z,i]
+            impedance = sum(model.linesus[z,k] * (model.vlt_angle[z,i] - model.vlt_angle[k,i]) for k in model.sinks)   
+            return 0 == impedance
+        model.TNnodes_BalConstraint= Constraint(model.tn_nodes,model.hh_periods,rule= TNnodes_Balance)
+
+
+
+        ######=================================================########
+        ######               Segment B.11.2                    ########
+        ######=================================================########
+
+        ######=================== Power balance in nodes of variable resources (without demand in this case) =================########
+
+        ###Hydropower Plants
+        def HPnodes_Balance(model,z,i):
+            dis_hydro = model.hydro[z,i]
+            #demand = model.HorizonDemand[z,i]
+            impedance = sum(model.linesus[z,k] * (model.vlt_angle[z,i] - model.vlt_angle[k,i]) for k in model.sinks)
+            return (1 - model.TransLoss) * dis_hydro == impedance ##- demand
+        model.HPnodes_BalConstraint= Constraint(model.h_nodes,model.hh_periods,rule= HPnodes_Balance)
+
+        ###Hydropower Imports
+        def HP_Imports_Balance(model,z,i):
+            hp_import = model.hydro_import[z,i]
+            #demand = model.HorizonDemand[z,i]
+            impedance = sum(model.linesus[z,k] * (model.vlt_angle[z,i] - model.vlt_angle[k,i]) for k in model.sinks)
+            return (1 - model.TransLoss) * hp_import == impedance ##- demand
+        model.HP_Imports_BalConstraint= Constraint(model.h_imports,model.hh_periods,rule= HP_Imports_Balance)
+
+        # ####Solar Plants
+        # def Solarnodes_Balance(model,z,i):
+        #    dis_solar = model.solar[z,i]
+        #    impedance = sum(model.linesus[z,k] * (model.vlt_angle[z,i] - model.vlt_angle[k,i]) for k in model.sinks)
+        #    return (1 - model.TransLoss) * dis_solar == impedance ##- demand
+        # model.Solarnodes_BalConstraint= Constraint(model.s_nodes,model.hh_periods,rule= Solarnodes_Balance)
+        
+        # #####Wind Plants
+        # def Windnodes_Balance(model,z,i):
+        #    dis_wind = model.wind[z,i]
+        #    impedance = sum(model.linesus[z,k] * (model.vlt_angle[z,i] - model.vlt_angle[k,i]) for k in model.sinks)
+        #    return (1 - model.TransLoss) * dis_wind == impedance ##- demand
+        # model.Windnodes_BalConstraint= Constraint(model.w_nodes,model.hh_periods,rule= Windnodes_Balance)
+
+        ######=================================================########
+        ######               Segment B.11.3                    ########
+        ######=================================================########
+
+        ##########============ Power balance in nodes of dispatchable resources with demand ==============############        
+        def GD_Balance_Rule(gd, model, i):
+            thermo = sum(model.mwh[j,i] for j in getattr(model, f'GD{gd+1}Gens'))
+            demand = model.HorizonDemand[self.net_data.node_lists['gd_nodes'][gd], i]
+            impedance = sum(model.linesus[self.net_data.node_lists['gd_nodes'][gd], k] * (model.vlt_angle[self.net_data.node_lists['gd_nodes'][gd],i] - model.vlt_angle[k,i]) for k in model.sinks)   
+            return (1 - model.TransLoss) * thermo - demand == impedance
+
+        for gd_idx, gd_node in enumerate(self.net_data.node_lists['gd_nodes']):
+            bal_constraint_rule = lambda model, i, gd_idx=gd_idx: GD_Balance_Rule(gd=gd_idx, model=model, i=i) #Beware of the closure
+            bal_constraint = Constraint(model.hh_periods, rule=bal_constraint_rule)
+            setattr(model, f'GD{gd_idx+1}_BalConstraint', bal_constraint)
+
+
+        ##########============ Power balance in nodes of dispatchable resources without demand ==============############
+        def GN_Balance_Rule(gn, model, i):
+            thermo = sum(model.mwh[j,i] for j in getattr(model, f'GN{gn+1}Gens'))
+            gn_node_name = self.net_data.node_lists['gn_nodes'][gn]
+            impedance = sum(model.linesus[gn_node_name, k] * (model.vlt_angle[gn_node_name,i] - model.vlt_angle[k,i]) for k in model.sinks)   
+            return (1 - model.TransLoss) * thermo == impedance #- demand
+
+        for gn_idx, gn_node in enumerate(self.net_data.node_lists['gn_nodes']):
+            bal_constraint_rule = lambda model, i, gn_idx=gn_idx: GN_Balance_Rule(gn=gn_idx, model=model, i=i) #Beware of the closure
+            bal_constraint = Constraint(model.hh_periods, rule=bal_constraint_rule)
+            setattr(model, f'GN{gn_idx+1}_BalConstraint', bal_constraint)
+
         return model
 
 
-    def attach_model_constraints_power_balance(self, model):
+    def attach_model_constraints_power_balance_new(self, model):
         #########======================== Power balance in sub-station nodes (with/without demand) ====================#######
         ###With demand
         def TDnodes_Balance(model,z,i):
@@ -412,7 +541,7 @@ class _PowerNetPyomoModel():
             return (1 - model.TransLoss) * thermo - demand == impedance
 
         for gd_idx, gd_node in enumerate(self.net_data.node_lists['gd_nodes']):
-            bal_constraint_rule = lambda model, i: partial(GD_Balance_Rule, gd=gd_idx)(model=model, i=i)
+            bal_constraint_rule = lambda model, i, gd=gd_idx: GD_Balance_Rule(gd=gd_idx, model=model, i=i)
             bal_constraint = Constraint(model.hh_periods, rule=bal_constraint_rule)
             setattr(model, f'GD{gd_idx+1}_BalConstraint', bal_constraint)
 
@@ -424,7 +553,7 @@ class _PowerNetPyomoModel():
             return (1 - model.TransLoss) * thermo == impedance #- demand
 
         for gn_idx, gn_node in enumerate(self.net_data.node_lists['gn_nodes']):
-            bal_constraint_rule = lambda model, i: partial(GN_Balance_Rule, gn=gn_idx)(model=model, i=i)
+            bal_constraint_rule = lambda model, i, gn=gn_idx: GN_Balance_Rule(gn=gn_idx, model=model, i=i)
             bal_constraint = Constraint(model.hh_periods, rule=bal_constraint_rule)
             setattr(model, f'GN{gn_idx+1}_BalConstraint', bal_constraint)
 
@@ -495,7 +624,7 @@ class _PowerNetPyomoModel():
         return tf.name
 
 class PowerNetPyomoModelCambodian(_PowerNetPyomoModel):
-    def __init__(self, dataset_dir=os.path.join("datasets", "pownet", "camb_2016"), year=2016):
+    def __init__(self, dataset_dir=os.path.join("datasets", "kamal0013", "camb_2016"), year=2016):
         pownet_data = PowerNetDataCambodian(dataset_dir=dataset_dir, year=year)
         
         super(PowerNetPyomoModelCambodian, self).__init__(pownet_data)

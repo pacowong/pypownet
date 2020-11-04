@@ -7,6 +7,7 @@ import pandas as pd
 from datetime import datetime
 import pyomo.environ as pyo
 from model import PowerNetPyomoModelCambodian
+import argparse
 
 
 def solve_powernet(pownet_pyomo, solver='glpk', year=2016, start_day=1, last_day=365):
@@ -14,44 +15,35 @@ def solve_powernet(pownet_pyomo, solver='glpk', year=2016, start_day=1, last_day
     simulation year, start(1-365) and end(1-365) days of simulation
     """
     model = pownet_pyomo.create_model()
-    model_data_path = pownet_pyomo.get_data_path()
-    print(model_data_path)
-    #model_data_path = 'temp.dat'
+    #model_data_path = pownet_pyomo.get_data_path()
+    #print(f'Save the transformed model data to {model_data_path}')
+    model_data_path = 'temp.dat'
+    print(f'Save the transformed model data to {model_data_path}')
     instance = model.create_instance(model_data_path)
 
-
-    ######=================================================########
-    ######               Segment C.4                       ########
-    ######=================================================########
-
     ###solver and number of threads to use for simulation
-    opt = SolverFactory("glpk") #SolverFactory("gurobi") ##SolverFactory("cplex")
-    #opt.options["threads"] = 1
+    opt = SolverFactory(solver)
     H = instance.HorizonHours
     K = range(1, H+1)
 
-
-    ######=================================================########
-    ######               Segment C.5                       ########
-    ######=================================================########
-
     ###Run simulation and save outputs
+    #Containers to store results
+    on = []
+    switch = []
 
-    #Space to store results
-    on=[]
-    switch=[]
+    mwh = []
+    hydro = []
+    solar = []
+    wind = []
 
-    mwh=[]
-    hydro=[]
-    solar=[]
-    wind=[]
+    hydro_import = []
 
-    hydro_import=[]
+    srsv = []
+    nrsv = []
 
-    srsv=[]
-    nrsv=[]
+    vlt_angle = []
 
-    vlt_angle=[]
+    system_cost = []
 
     for day in range(start_day, last_day+1):
         if hasattr(instance, 'd_nodes'):
@@ -87,7 +79,8 @@ def solve_powernet(pownet_pyomo, solver='glpk', year=2016, start_day=1, last_day
         
         result = opt.solve(instance) ##,tee=True to check number of variables
         # instance.display()
-        instance.solutions.load_from(result)   
+        instance.solutions.load_from(result)
+        system_cost.append((day, instance.SystemCost.value()))
     
         #The following section is for storing and sorting results
         for v in instance.component_objects(Var, active=True):
@@ -97,7 +90,7 @@ def solve_powernet(pownet_pyomo, solver='glpk', year=2016, start_day=1, last_day
                 for index in varobject:
                     if int(index[1]>0 and index[1]<25):
                         if index[0] in instance.h_nodes:
-                            hydro.append((index[0],index[1]+((day-1)*24),varobject[index].value))   
+                            hydro.append((index[0],index[1]+((day-1)*24),varobject[index].value))
 
             elif a=='solar':
                 for index in varobject:
@@ -154,6 +147,7 @@ def solve_powernet(pownet_pyomo, solver='glpk', year=2016, start_day=1, last_day
         # Update initialization values for "on" 
         for z in instance.Generators:
             instance.ini_on[z] = round(ini_on_[z])
+
         
         print(day)
         print(str(datetime.now()))
@@ -168,7 +162,8 @@ def solve_powernet(pownet_pyomo, solver='glpk', year=2016, start_day=1, last_day
         'hydro_import': hydro_import, 
         'srsv': srsv, 
         'nrsv': nrsv, 
-        'vlt_angle': vlt_angle
+        'vlt_angle': vlt_angle,
+        'system_cost': system_cost
     }
 
 
@@ -179,10 +174,19 @@ def save_node_result(soln_data, out_csv_fpath, cols):
 
 
 if __name__ == "__main__":
-    run_no = 1
-    year = 2016
-    pownet_pyomo = PowerNetPyomoModelCambodian(year=year)
-    solns = solve_powernet(pownet_pyomo, solver='glpk', year=year, start_day=1, last_day=4)
+    parser = argparse.ArgumentParser(description='Run PyPowNet Solving Procedure')
+    parser.add_argument('data', type=str, default=os.path.join("datasets", "kamal0013", "camb_2016"), help='Power system data')
+    parser.add_argument('year', type=int, help='year of simulation (e.g. 2016)')
+    parser.add_argument('start', type=int, help='start day of simulation (1-365)')
+    parser.add_argument('last', type=int, help='last day of simulation (1-365)')
+    parser.add_argument('run_no', type=int, help='Run number')
+    parser.add_argument('solver', type=str, help='Solver used by Pyomo Solver Factory (e.g. glpk, gurobi, cplex)')
+    args = parser.parse_args()
+
+    run_no = args.run_no
+    year = args.year
+    pownet_pyomo = PowerNetPyomoModelCambodian(dataset_dir=args.data, year=year)
+    solns = solve_powernet(pownet_pyomo, solver=args.solver, year=year, start_day=args.start, last_day=args.last)
     for soln_node in solns:
         csv_path = f'out_camb_R{run_no}_{year}_{soln_node}.csv'
         if soln_node in ['hydro', 'hydro_import', 'solar', 'wind', 'vlt_angle']:
@@ -190,4 +194,6 @@ if __name__ == "__main__":
         elif soln_node in ['mwh', 'on', 'switch', 'srsv', 'nrsv']:
             save_node_result(solns[soln_node], csv_path, ('Generator','Time','Value'))
         else:
-            save_node_result(solns[soln_node], csv_path, ('Node','Time','Value'))
+            save_node_result(solns[soln_node], csv_path, ('Time','Value'))
+     
+    print(solns['system_cost']) #Paco

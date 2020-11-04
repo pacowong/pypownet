@@ -37,6 +37,7 @@ class _PowerNetData:
         #Unit cost of generation / import of each fuel type
         self.gen_cost = {'coal_st':5.2, 'oil_ic':6.0, 'oil_st':6.0, \
                     'imp_viet':65, 'imp_thai':66, 'slack': 1000}
+        self.generators_with_min_reserves = ['coal_st', 'oil_ic', 'oil_st']
         #Unit cost of hydro import
         self.h_import_cost = 48
 
@@ -135,6 +136,10 @@ class _PowerNetData:
     def get_fuel_types(self):
         return list(self.gen_cost.keys())
 
+
+    def get_generators_with_min_reserves(self):
+        return self.generators_with_min_reserves
+        
 
     def export_generators_by_fuel_type(self, f, rename_map={'imp_viet': 'Imp_Viet', 'imp_thai': 'Imp_Thai'}):
         ####### generator sets by type
@@ -297,6 +302,7 @@ class PowerNetDataCambodian(_PowerNetData):
             'imp_thai':66,
             'slack':1000
         }
+        self.generators_with_min_reserves = ['coal_st', 'oil_ic', 'oil_st']
         #Unit cost of hydro import
         self.h_import_cost = 48
 
