@@ -12,6 +12,15 @@ Ultimately, we hope that our effort will encourage more regions to adopt renewab
 PyPowNet is written in Python 3.6. It requires the following Python packages: (i) Pyomo, (ii) NumPy, and (iii) Pandas. It also requires an optimization solver (e.g. CPLEX). 
 PyPowNet has been tested in Anaconda on Windows 10.
 
+# Installation
+You can perform a minimal install of ``pypownet`` with:
+
+.. code:: shell
+
+    git clone https://github.com/pacowong/pypownet.git
+    cd pypownet
+    pip install -e .
+
 # How to run
 ```python
 python pypownet/solver.py datasets/kamal0013/camb_2016 2016 1 2 1 glpk
@@ -36,7 +45,7 @@ If you use PyPowNet for your research, please cite the following papers:
 
 ```bibtex
 @article{chowdhury2020expected,
-  title={{Expected Benefits of Laos’ Hydropower Development Curbed by Hydroclimatic Variability and Limited Transmission Capacity: Opportunities to Reform}},
+  title={{Expected Benefits of Laos' Hydropower Development Curbed by Hydroclimatic Variability and Limited Transmission Capacity: Opportunities to Reform}},
   author={Chowdhury, AFM Kamal and Dang, Thanh Duc and Bagchi, Arijit and Galelli, Stefano},
   journal={Journal of Water Resources Planning and Management},
   volume={146},
@@ -61,7 +70,7 @@ If you use PyPowNet for your research, please cite the following papers:
 ```bibtex
 @misc{pypownet,
     author = {Pak-Kan Wong},
-    title = {{PyPowNet: A Python Library for PowNet Model Optimization}},
+    title = {{PyPowNet: A Python Library for Refactored PowNet Model Optimization}},
     year = {2020},
     publisher = {GitHub},
     journal = {GitHub repository},
