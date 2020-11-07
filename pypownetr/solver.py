@@ -6,23 +6,20 @@ from operator import itemgetter
 import pandas as pd
 from datetime import datetime
 import pyomo.environ as pyo
-from model import PowerNetPyomoModelCambodian
+from .model import PowerNetPyomoModelCambodian
 import argparse
 
 
-def solve_powernet(pownet_pyomo, solver='glpk', year=2016, start_day=1, last_day=365):
+def solve_powernet(pyomo_model, model_data_path, solver, year=2016, start_day=1, last_day=365):
     """
     simulation year, start(1-365) and end(1-365) days of simulation
     """
-    model = pownet_pyomo.create_model()
-    #model_data_path = pownet_pyomo.get_data_path()
+    #model_data_path = 'temp.dat'
     #print(f'Save the transformed model data to {model_data_path}')
-    model_data_path = 'temp.dat'
-    print(f'Save the transformed model data to {model_data_path}')
-    instance = model.create_instance(model_data_path)
+    
+    instance = pyomo_model.create_instance(model_data_path)
 
     ###solver and number of threads to use for simulation
-    opt = SolverFactory(solver)
     H = instance.HorizonHours
     K = range(1, H+1)
 
@@ -77,7 +74,7 @@ def solve_powernet(pownet_pyomo, solver='glpk', year=2016, start_day=1, last_day
                 for i in K:
                     instance.HorizonHydroImport[z,i] = instance.SimHydroImport[z,(day-1)*24+i]     
         
-        result = opt.solve(instance) ##,tee=True to check number of variables
+        result = solver.solve(instance) ##,tee=True to check number of variables
         # instance.display()
         instance.solutions.load_from(result)
         system_cost.append((day, instance.SystemCost.value()))
@@ -186,7 +183,11 @@ if __name__ == "__main__":
     run_no = args.run_no
     year = args.year
     pownet_pyomo = PowerNetPyomoModelCambodian(dataset_dir=args.data, year=year)
-    solns = solve_powernet(pownet_pyomo, solver=args.solver, year=year, start_day=args.start, last_day=args.last)
+    solver = SolverFactory(args.solver)
+    model_data_path = pownet_pyomo.get_data_path()
+    print(f'Save the transformed model data to {model_data_path}')
+    pyomo_model = pownet_pyomo.create_model(constraints={'logical': True, 'up_down_time': True, 'ramp_rate': True, 'capacity': True, 'power_balance': True, 'transmission': True, 'reserve_and_zero_sum': True})
+    solns = solve_powernet(pyomo_model, model_data_path, solver=solver, year=year, start_day=args.start, last_day=args.last)
     for soln_node in solns:
         csv_path = f'out_camb_R{run_no}_{year}_{soln_node}.csv'
         if soln_node in ['hydro', 'hydro_import', 'solar', 'wind', 'vlt_angle']:

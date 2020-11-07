@@ -6,7 +6,7 @@ from pyomo.core import Var
 from pyomo.core import Param
 from pyomo.opt import SolverFactory
 import itertools
-from data import PowerNetDataCambodian
+from .data import PowerNetDataCambodian
 import os
 import tempfile
 
@@ -16,7 +16,10 @@ class _PowerNetPyomoModel():
         pass
 
 
-    def create_model(self, rename_map={'imp_viet': 'Imp_Viet', 'imp_thai': 'Imp_Thai'}):
+    def create_model(
+        self,
+        rename_map={'imp_viet': 'Imp_Viet', 'imp_thai': 'Imp_Thai'},
+        constraints={'logical': True, 'up_down_time': True, 'ramp_rate': True, 'capacity': True, 'power_balance': True, 'transmission': True, 'reserve_and_zero_sum': True}):
         # set of generators (in the order of g_nodes list)
         model = AbstractModel()
         all_Generators = []
@@ -270,14 +273,21 @@ class _PowerNetPyomoModel():
         return model
 
 
-    def attach_model_constraints(self, model):
-        model = self.attach_model_constraints_logical(model)
-        model = self.attach_model_constraints_up_down_time(model)
-        model = self.attach_model_constraints_ramp_rate(model)
-        model = self.attach_model_constraints_capacity(model)
-        model = self.attach_model_constraints_power_balance(model)
-        model = self.attach_model_constraints_transmission(model)
-        model = self.attach_model_constraints_reserve_and_zero_sum(model)
+    def attach_model_constraints(self, model, logical=True, up_down_time=True, ramp_rate=True, capacity=True, power_balance=True, transmission=True, reserve_and_zero_sum=True):
+        if logical:
+            model = self.attach_model_constraints_logical(model)
+        if up_down_time:
+            model = self.attach_model_constraints_up_down_time(model)
+        if ramp_rate:
+            model = self.attach_model_constraints_ramp_rate(model)
+        if capacity:
+            model = self.attach_model_constraints_capacity(model)
+        if power_balance:
+            model = self.attach_model_constraints_power_balance(model)
+        if transmission:
+            model = self.attach_model_constraints_transmission(model)
+        if reserve_and_zero_sum:
+            model = self.attach_model_constraints_reserve_and_zero_sum(model)
         return model
 
 
